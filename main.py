@@ -1,79 +1,85 @@
-# main.py — Worksite Secure API (version complète + CORS)
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import List, Optional
 from datetime import datetime
+import uuid
 
-# -------------------------------------------------
-# Création de l'application FastAPI
-# -------------------------------------------------
-app = FastAPI(
-    title="Worksite Secure API",
-    version="0.1.0",
-    description="API de démo pour le suivi de la sécurité des chantiers."
-)
+app = FastAPI(title="Worksite Secure API", version="0.1.0")
 
-# -------------------------------------------------
-# CORS : autoriser le dashboard Next.js à appeler l'API
-# -------------------------------------------------
+# =========================
+# CORS – autoriser le Dashboard
+# =========================
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    # à activer plus tard quand tu déploieras le dashboard :
-    "https://worksite-secure-dashboard.onrender.com",
+    "https://worksite-secure-dashboard.vercel.app",  # Front en prod (Vercel)
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,   # en dev tu peux mettre ["*"] si tu veux tout ouvrir
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -------------------------------------------------
-# Modèles de données
-# -------------------------------------------------
+# =========================
+# MODELES
+# =========================
+
 class Site(BaseModel):
-    id: int
+    id: str
     name: str
     location: Optional[str] = None
     manager: Optional[str] = None
-    risk_score: int  # 0–100
+    risk_score: int = 0
 
 
 class Incident(BaseModel):
-    id: int
-    site_id: int
-    type: str          # Vol, Accident, Intrusion...
-    severity: str      # Critique, Moyen, Mineur
+    id: str
+    site_id: str
+    type: str
+    severity: str
     description: str
-    status: str        # Nouveau, En cours, Résolu
+    status: str
     created_at: datetime
 
 
-# -------------------------------------------------
-# Faux "petit" stockage en mémoire (pour la démo)
-# -------------------------------------------------
+class IncidentCreate(BaseModel):
+    site_id: str
+    type: str
+    severity: str
+    description: str
+
+
+class IncidentUpdate(BaseModel):
+    status: Optional[str] = None
+    severity: Optional[str] = None
+    description: Optional[str] = None
+
+
+# =========================
+# "BASE DE DONNÉES" EN MÉMOIRE
+# =========================
+
 sites_db: List[Site] = [
     Site(
-        id=1,
+        id="1",
         name="Immeuble Plateau A",
         location="Localisation non précisée",
         manager="Non renseigné",
         risk_score=62,
     ),
     Site(
-        id=2,
+        id="2",
         name="Chantier Zone Industrielle",
         location="Localisation non précisée",
         manager="Non renseigné",
         risk_score=45,
     ),
     Site(
-        id=3,
+        id="3",
         name="Résidence Riviera Golf",
         location="Localisation non précisée",
         manager="Non renseigné",
@@ -83,8 +89,8 @@ sites_db: List[Site] = [
 
 incidents_db: List[Incident] = [
     Incident(
-        id=1,
-        site_id=1,
+        id="I1",
+        site_id="1",
         type="Vol",
         severity="Moyen",
         description="Vol de ciment",
@@ -92,8 +98,8 @@ incidents_db: List[Incident] = [
         created_at=datetime(2025, 12, 30, 8, 20, 13),
     ),
     Incident(
-        id=2,
-        site_id=1,
+        id="I2",
+        site_id="1",
         type="Accident",
         severity="Critique",
         description="Chute ouvrier",
@@ -101,8 +107,8 @@ incidents_db: List[Incident] = [
         created_at=datetime(2025, 12, 30, 8, 20, 13),
     ),
     Incident(
-        id=3,
-        site_id=2,
+        id="I3",
+        site_id="2",
         type="Intrusion",
         severity="Mineur",
         description="Personne non autorisée",
@@ -112,56 +118,18 @@ incidents_db: List[Incident] = [
 ]
 
 
-# -------------------------------------------------
-# Fonctions utilitaires
-# -------------------------------------------------
-def compute_stats():
-    total_sites = len(sites_db)
-    total_incidents = len(incidents_db)
-
-    if total_incidents == 0:
-        resolved_pct = 0
-    else:
-        resolved = sum(1 for i in incidents_db if i.status.lower() == "résolu")
-        resolved_pct = round(resolved * 100 / total_incidents)
-
-    critical_incidents = sum(
-        1 for i in incidents_db if i.severity.lower() == "critique"
-    )
-
-    return {
-        "total_sites": total_sites,
-        "total_incidents": total_incidents,
-        "resolved_percentage": resolved_pct,
-        "critical_incidents": critical_incidents,
-    }
-
-
-# -------------------------------------------------
-# Routes API
-# -------------------------------------------------
-@app.get("/")
-def root():
-    return {
-        "message": "Worksite Secure API",
-        "docs": "/docs",
-        "status_endpoint": "/status",
-    }
-
+# =========================
+# ENDPOINTS
+# =========================
 
 @app.get("/status")
 def get_status():
-    """
-    Endpoint simple pour le check de santé de l'API.
-    Utilisé par le dashboard pour savoir si le backend est en ligne.
-    """
-    stats = compute_stats()
     return {
         "app": "Worksite Secure",
         "status": "OK",
         "version": "0.1.0",
-        "sites": stats["total_sites"],
-        "incidents": stats["total_incidents"],
+        "sites": len(sites_db),
+        "incidents": len(incidents_db),
     }
 
 
@@ -175,18 +143,53 @@ def list_incidents():
     return incidents_db
 
 
-@app.get("/stats")
-def get_stats():
-    """
-    Statistiques globales pour alimenter les cartes du dashboard DG.
-    """
-    return compute_stats()
+@app.get("/incidents/open", response_model=List[Incident])
+def list_open_incidents():
+    return [
+        inc
+        for inc in incidents_db
+        if inc.status.lower() not in ["resolu", "résolu"]
+    ]
 
 
-# -------------------------------------------------
-# Lancement local (Render utilise déjà gunicorn/uvicorn via start command)
-# -------------------------------------------------
-if __name__ == "__main__":
-    import uvicorn
+@app.post("/incidents", response_model=Incident, status_code=201)
+def create_incident(payload: IncidentCreate):
+    # Vérifier que le chantier existe
+    site = next((s for s in sites_db if s.id == payload.site_id), None)
+    if site is None:
+        raise HTTPException(status_code=400, detail="Chantier inconnu.")
 
-    uvicorn.run("main:app", host="0.0.0.0", port=10000, reload=True)
+    new_incident = Incident(
+        id=str(uuid.uuid4())[:8].upper(),
+        site_id=payload.site_id,
+        type=payload.type,
+        severity=payload.severity,
+        description=payload.description,
+        status="Nouveau",
+        created_at=datetime.utcnow(),
+    )
+    incidents_db.append(new_incident)
+    return new_incident
+
+
+@app.patch("/incidents/{incident_id}", response_model=Incident)
+def update_incident(incident_id: str, payload: IncidentUpdate):
+    incident = next((i for i in incidents_db if i.id == incident_id), None)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident introuvable.")
+
+    data = incident.dict()
+
+    if payload.status is not None:
+        data["status"] = payload.status
+    if payload.severity is not None:
+        data["severity"] = payload.severity
+    if payload.description is not None:
+        data["description"] = payload.description
+
+    updated = Incident(**data)
+
+    # Remplacer dans la "base"
+    index = incidents_db.index(incident)
+    incidents_db[index] = updated
+    return updated
